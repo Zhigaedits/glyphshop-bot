@@ -1,4 +1,5 @@
 import os
+import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -22,7 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Добро пожаловать в GlyphShop!\n\n"
         "💎 Здесь вы можете приобрести Glyphs.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -31,15 +32,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "shop":
-        keyboard = [
-            [
+        keyboard = []
+
+        for price, glyphs in PACKAGES.items():
+            keyboard.append([
                 InlineKeyboardButton(
                     f"💎 {price} ₸ — {glyphs} Glyphs",
-                    callback_data=f"pack_{price}"
+                    callback_data=f"pack_{price}",
                 )
-            ]
-            for price, glyphs in PACKAGES.items()
-        ]
+            ])
 
         keyboard.append([
             InlineKeyboardButton("🔙 Назад", callback_data="back")
@@ -47,7 +48,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "🛒 GlyphShop\n\nВыберите пакет:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
     elif query.data.startswith("pack_"):
@@ -55,15 +56,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         glyphs = PACKAGES[price]
 
         keyboard = [
-            [InlineKeyboardButton("💳 Оплатить", callback_data=f"pay_{price}")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="shop")]
+            [InlineKeyboardButton(
+                "💳 Оплатить",
+                callback_data=f"pay_{price}",
+            )],
+            [InlineKeyboardButton(
+                "🔙 Назад",
+                callback_data="shop",
+            )],
         ]
 
         await query.edit_message_text(
-            f"💎 {glyphs} Glyphs\n"
+            f"💎 Пакет: {glyphs} Glyphs\n"
             f"💰 Цена: {price} ₸\n\n"
             "Оплата пока не подключена.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
     elif query.data == "purchases":
@@ -71,7 +78,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📦 Мои покупки\n\nПокупок пока нет.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="back")]
-            ])
+            ]),
         )
 
     elif query.data == "help":
@@ -80,7 +87,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Если возникли проблемы, обратитесь к администратору.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="back")]
-            ])
+            ]),
         )
 
     elif query.data == "back":
@@ -92,7 +99,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "👋 Добро пожаловать в GlyphShop!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
     elif query.data.startswith("pay_"):
@@ -100,20 +107,33 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💳 Оплата пока не подключена.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="shop")]
-            ])
+            ]),
         )
 
 
-def main():
-    token = os.environ["BOT_TOKEN"]
+async def main():
+    token = os.environ.get("BOT_TOKEN")
 
-    app = Application.builder().token(token).build()
+    if not token:
+        raise RuntimeError("BOT_TOKEN не установлен в Render")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(buttons))
+    application = Application.builder().token(token).build()
 
-    app.run_polling()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(buttons))
+
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
