@@ -32,7 +32,7 @@ ADMIN_ID = 816157991
 # 180 ₸ = 100 000 Glyphs
 GLYPHS_PER_TENGE = 100000 / 180
 
-# НОВЫЕ ПАКЕТЫ
+# ПАКЕТЫ
 PACKAGES = {
     "100": 55555,
     "500": 277777,
@@ -101,6 +101,7 @@ def create_transaction(
         "receipt_received": False,
         "created_at": datetime.now().isoformat(),
         "confirmed_at": None,
+        "completed_at": None,
     }
 
     save_transactions(transactions)
@@ -619,7 +620,11 @@ async def buttons(
 
         if transaction[
             "status"
-        ] == "confirmed":
+        ] in (
+            "confirmed",
+            "awaiting_admin_receipt",
+            "completed",
+        ):
 
             await query.answer(
                 "⚠️ Эта транзакция уже подтверждена.",
@@ -639,9 +644,17 @@ async def buttons(
 
             return
 
+        # ---------------------------------
+        # ВАЖНО:
+        # После подтверждения НЕ завершаем
+        # транзакцию сразу.
+        #
+        # Теперь ждём чек от администратора.
+        # ---------------------------------
+
         update_transaction(
             transaction_id,
-            status="confirmed",
+            status="awaiting_admin_receipt",
             confirmed_at=datetime.now().isoformat(),
         )
 
@@ -654,15 +667,15 @@ async def buttons(
             f"💰 Сумма: "
             f"{transaction['price']} ₸\n"
             f"💎 Glyphs: "
-            f"{transaction['glyphs']:,}"
+            f"{transaction['glyphs']:,}\n\n"
+            "📎 Теперь отправьте мне сообщение "
+            "или ссылку с чеком.\n\n"
+            "Бот отправит его покупателю "
+            "и завершит транзакцию."
             .replace(",", " "),
         )
 
-        # Здесь пока только подтверждение.
-        # Автоматическую передачу Glyphs
-        # подключим отдельно через официальный
-        # способ передачи Glyphs.
-
+        # Сообщение покупателю
         await context.bot.send_message(
             chat_id=transaction[
                 "user_id"
@@ -675,7 +688,7 @@ async def buttons(
                 f"{transaction['price']} ₸\n"
                 f"💎 Glyphs: "
                 f"{transaction['glyphs']:,}\n\n"
-                "Оплата успешно проверена."
+                "⏳ Подготавливаем ваш чек..."
             ).replace(",", " "),
         )
 
@@ -722,6 +735,8 @@ async def buttons(
             "status"
         ] in (
             "confirmed",
+            "awaiting_admin_receipt",
+            "completed",
             "rejected",
         ):
 
@@ -801,10 +816,19 @@ async def buttons(
                 status = {
                     "waiting_receipt":
                         "⏳ Ожидает квитанцию",
+
                     "receipt_received":
                         "🔍 На проверке",
+
                     "confirmed":
                         "✅ Подтверждено",
+
+                    "awaiting_admin_receipt":
+                        "📎 Готовится чек",
+
+                    "completed":
+                        "✅ Завершено",
+
                     "rejected":
                         "❌ Отклонено",
                 }.get(
@@ -1077,7 +1101,6 @@ async def receipt_handler(
 
         return
 
-    # Получаем Telegram Document
     document = update.message.document
 
     if not document:
@@ -1102,7 +1125,6 @@ async def receipt_handler(
 
         username = user.full_name
 
-    # Обновляем транзакцию
     update_transaction(
         transaction_id,
         receipt_received=True,
@@ -1137,7 +1159,6 @@ async def receipt_handler(
         ).replace(",", " "),
     )
 
-    # Кнопка пользователю
     keyboard = [
         [
             InlineKeyboardButton(
@@ -1160,6 +1181,117 @@ async def receipt_handler(
         reply_markup=InlineKeyboardMarkup(
             keyboard
         ),
+    )
+
+
+# =========================
+# НОВАЯ ФУНКЦИЯ:
+# ЧЕК ОТ АДМИНИСТРАТОРА
+# =========================
+
+async def admin_delivery_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    # Только владелец бота
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    transactions = load_transactions()
+
+    # Ищем транзакцию, которую админ
+    # подтвердил и для которой теперь
+    # ожидается чек
+    waiting_transactions = [
+        transaction
+        for transaction in transactions.values()
+        if transaction.get(
+            "status"
+        ) == "awaiting_admin_receipt"
+    ]
+
+    if not waiting_transactions:
+
+        await update.message.reply_text(
+            "ℹ️ Сейчас нет транзакции, "
+            "ожидающей чек."
+        )
+
+        return
+
+    # Берём последнюю такую транзакцию
+    waiting_transactions.sort(
+        key=lambda x: x.get(
+            "confirmed_at",
+            "",
+        ),
+        reverse=True,
+    )
+
+    transaction = waiting_transactions[0]
+
+    transaction_id = transaction[
+        "id"
+    ]
+
+    user_id = transaction[
+        "user_id"
+    ]
+
+    # =================================
+    # КОПИРУЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ
+    # =================================
+
+    try:
+
+        await context.bot.copy_message(
+            chat_id=user_id,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.message_id,
+        )
+
+    except Exception as error:
+
+        await update.message.reply_text(
+            "❌ Не удалось отправить сообщение "
+            "покупателю.\n\n"
+            f"Ошибка: {error}"
+        )
+
+        return
+
+    # =================================
+    # ЗАВЕРШАЕМ ТРАНЗАКЦИЮ
+    # =================================
+
+    update_transaction(
+        transaction_id,
+        status="completed",
+        completed_at=datetime.now().isoformat(),
+    )
+
+    # Уведомляем покупателя
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=(
+            "✅ Всё готово!\n\n"
+            f"🧾 Транзакция: {transaction_id}\n"
+            f"💎 Glyphs: "
+            f"{transaction['glyphs']:,}\n\n"
+            "Чек отправлен."
+        ).replace(",", " "),
+    )
+
+    # Уведомляем администратора
+    await update.message.reply_text(
+        "✅ Чек отправлен покупателю.\n\n"
+        f"🧾 Транзакция: {transaction_id}\n"
+        f"👤 ID: {user_id}\n"
+        f"💎 Glyphs: "
+        f"{transaction['glyphs']:,}\n\n"
+        "Транзакция завершена."
+        .replace(",", " "),
     )
 
 
@@ -1226,6 +1358,26 @@ async def run_bot():
     application.add_handler(
         CallbackQueryHandler(
             buttons,
+        )
+    )
+
+    # =================================
+    # НОВОЕ:
+    # СООБЩЕНИЕ ОТ АДМИНА ПОСЛЕ
+    # ПОДТВЕРЖДЕНИЯ
+    #
+    # Срабатывает ТОЛЬКО для ADMIN_ID.
+    # Поэтому пользовательские сообщения
+    # эта функция не перехватывает.
+    # =================================
+
+    application.add_handler(
+        MessageHandler(
+            filters.User(
+                user_id=ADMIN_ID
+            )
+            & ~filters.COMMAND,
+            admin_delivery_handler,
         )
     )
 
