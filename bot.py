@@ -411,25 +411,25 @@ async def buttons(
 
     if data.startswith("admin_confirm_"):
 
-        if query.from_user.id != ADMIN_ID:
-            await query.answer(
-                "❌ Нет доступа.",
-                show_alert=True,
-            )
-            return
+    if query.from_user.id != ADMIN_ID:
+        await query.answer(
+            "❌ Нет доступа.",
+            show_alert=True,
+        )
+        return
 
-        parts = data.split("_")
+    parts = data.split("_")
 
-        if len(parts) != 4:
-            await query.answer(
-                "❌ Ошибка заявки.",
-                show_alert=True,
-            )
-            return
+    if len(parts) != 5:
+        await query.answer(
+            "❌ Ошибка заявки.",
+            show_alert=True,
+        )
+        return
 
-        user_id = parts[2]
-        price = parts[3]
-        glyphs = "0"
+    user_id = parts[2]
+    price = parts[3]
+    glyphs = parts[4]
 
         # В этой версии кнопка только подтверждает оплату.
         # Автоматическая выдача Glyphs пока не включена.
