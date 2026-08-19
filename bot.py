@@ -30,7 +30,7 @@ PACKAGES = {
     "3000": "1 665 000",
 }
 
-
+ADMIN_ID = 816157991
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🛒 Магазин", callback_data="shop")],
