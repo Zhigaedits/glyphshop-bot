@@ -32,7 +32,6 @@ ADMIN_ID = 816157991
 # 180 ₸ = 100 000 Glyphs
 GLYPHS_PER_TENGE = 100000 / 180
 
-# ПАКЕТЫ
 PACKAGES = {
     "100": 55555,
     "500": 277777,
@@ -101,7 +100,6 @@ def create_transaction(
         "receipt_received": False,
         "created_at": datetime.now().isoformat(),
         "confirmed_at": None,
-        "completed_at": None,
     }
 
     save_transactions(transactions)
@@ -271,9 +269,7 @@ async def show_payment(
     user = query.from_user
 
     if user.username:
-        username = (
-            f"@{user.username}"
-        )
+        username = f"@{user.username}"
     else:
         username = user.full_name
 
@@ -352,6 +348,14 @@ async def buttons(
 
     if data == "shop":
 
+        context.user_data[
+            "waiting_for_amount"
+        ] = False
+
+        context.user_data[
+            "waiting_for_receipt"
+        ] = False
+
         await show_shop(query)
 
         return
@@ -394,6 +398,10 @@ async def buttons(
         context.user_data[
             "waiting_for_amount"
         ] = True
+
+        context.user_data[
+            "waiting_for_receipt"
+        ] = False
 
         await query.edit_message_text(
             "💰 Своя сумма\n\n"
@@ -456,6 +464,10 @@ async def buttons(
         context.user_data[
             "waiting_for_receipt"
         ] = True
+
+        context.user_data[
+            "waiting_for_amount"
+        ] = False
 
         await query.edit_message_text(
             "📎 Отправьте квитанцию сюда "
@@ -620,11 +632,7 @@ async def buttons(
 
         if transaction[
             "status"
-        ] in (
-            "confirmed",
-            "awaiting_admin_receipt",
-            "completed",
-        ):
+        ] == "confirmed":
 
             await query.answer(
                 "⚠️ Эта транзакция уже подтверждена.",
@@ -644,17 +652,9 @@ async def buttons(
 
             return
 
-        # ---------------------------------
-        # ВАЖНО:
-        # После подтверждения НЕ завершаем
-        # транзакцию сразу.
-        #
-        # Теперь ждём чек от администратора.
-        # ---------------------------------
-
         update_transaction(
             transaction_id,
-            status="awaiting_admin_receipt",
+            status="confirmed",
             confirmed_at=datetime.now().isoformat(),
         )
 
@@ -667,15 +667,10 @@ async def buttons(
             f"💰 Сумма: "
             f"{transaction['price']} ₸\n"
             f"💎 Glyphs: "
-            f"{transaction['glyphs']:,}\n\n"
-            "📎 Теперь отправьте мне сообщение "
-            "или ссылку с чеком.\n\n"
-            "Бот отправит его покупателю "
-            "и завершит транзакцию."
+            f"{transaction['glyphs']:,}"
             .replace(",", " "),
         )
 
-        # Сообщение покупателю
         await context.bot.send_message(
             chat_id=transaction[
                 "user_id"
@@ -688,7 +683,7 @@ async def buttons(
                 f"{transaction['price']} ₸\n"
                 f"💎 Glyphs: "
                 f"{transaction['glyphs']:,}\n\n"
-                "⏳ Подготавливаем ваш чек..."
+                "Оплата успешно проверена."
             ).replace(",", " "),
         )
 
@@ -735,8 +730,6 @@ async def buttons(
             "status"
         ] in (
             "confirmed",
-            "awaiting_admin_receipt",
-            "completed",
             "rejected",
         ):
 
@@ -816,19 +809,10 @@ async def buttons(
                 status = {
                     "waiting_receipt":
                         "⏳ Ожидает квитанцию",
-
                     "receipt_received":
                         "🔍 На проверке",
-
                     "confirmed":
                         "✅ Подтверждено",
-
-                    "awaiting_admin_receipt":
-                        "📎 Готовится чек",
-
-                    "completed":
-                        "✅ Завершено",
-
                     "rejected":
                         "❌ Отклонено",
                 }.get(
@@ -893,9 +877,15 @@ async def buttons(
 
     if data == "back":
 
-        await start_from_button(
-            query
-        )
+        context.user_data[
+            "waiting_for_amount"
+        ] = False
+
+        context.user_data[
+            "waiting_for_receipt"
+        ] = False
+
+        await start_from_button(query)
 
         return
 
@@ -944,6 +934,11 @@ async def custom_amount_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
+    # ВАЖНО:
+    # Этот обработчик работает ТОЛЬКО
+    # когда пользователь действительно
+    # находится в режиме ввода суммы.
 
     if not context.user_data.get(
         "waiting_for_amount",
@@ -1089,7 +1084,9 @@ async def receipt_handler(
 
         return
 
-    transaction = load_transactions().get(
+    transactions = load_transactions()
+
+    transaction = transactions.get(
         transaction_id
     )
 
@@ -1116,13 +1113,8 @@ async def receipt_handler(
     user = update.effective_user
 
     if user.username:
-
-        username = (
-            f"@{user.username}"
-        )
-
+        username = f"@{user.username}"
     else:
-
         username = user.full_name
 
     update_transaction(
@@ -1185,124 +1177,23 @@ async def receipt_handler(
 
 
 # =========================
-# НОВАЯ ФУНКЦИЯ:
-# ЧЕК ОТ АДМИНИСТРАТОРА
-# =========================
-
-async def admin_delivery_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    # Только владелец бота
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    transactions = load_transactions()
-
-    # Ищем транзакцию, которую админ
-    # подтвердил и для которой теперь
-    # ожидается чек
-    waiting_transactions = [
-        transaction
-        for transaction in transactions.values()
-        if transaction.get(
-            "status"
-        ) == "awaiting_admin_receipt"
-    ]
-
-    if not waiting_transactions:
-
-        await update.message.reply_text(
-            "ℹ️ Сейчас нет транзакции, "
-            "ожидающей чек."
-        )
-
-        return
-
-    # Берём последнюю такую транзакцию
-    waiting_transactions.sort(
-        key=lambda x: x.get(
-            "confirmed_at",
-            "",
-        ),
-        reverse=True,
-    )
-
-    transaction = waiting_transactions[0]
-
-    transaction_id = transaction[
-        "id"
-    ]
-
-    user_id = transaction[
-        "user_id"
-    ]
-
-    # =================================
-    # КОПИРУЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ
-    # =================================
-
-    try:
-
-        await context.bot.copy_message(
-            chat_id=user_id,
-            from_chat_id=update.effective_chat.id,
-            message_id=update.message.message_id,
-        )
-
-    except Exception as error:
-
-        await update.message.reply_text(
-            "❌ Не удалось отправить сообщение "
-            "покупателю.\n\n"
-            f"Ошибка: {error}"
-        )
-
-        return
-
-    # =================================
-    # ЗАВЕРШАЕМ ТРАНЗАКЦИЮ
-    # =================================
-
-    update_transaction(
-        transaction_id,
-        status="completed",
-        completed_at=datetime.now().isoformat(),
-    )
-
-    # Уведомляем покупателя
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=(
-            "✅ Всё готово!\n\n"
-            f"🧾 Транзакция: {transaction_id}\n"
-            f"💎 Glyphs: "
-            f"{transaction['glyphs']:,}\n\n"
-            "Чек отправлен."
-        ).replace(",", " "),
-    )
-
-    # Уведомляем администратора
-    await update.message.reply_text(
-        "✅ Чек отправлен покупателю.\n\n"
-        f"🧾 Транзакция: {transaction_id}\n"
-        f"👤 ID: {user_id}\n"
-        f"💎 Glyphs: "
-        f"{transaction['glyphs']:,}\n\n"
-        "Транзакция завершена."
-        .replace(",", " "),
-    )
-
-
-# =========================
-# НЕ ДОКУМЕНТЫ
+# НЕ ДОКУМЕНТЫ ПРИ КВИТАНЦИИ
 # =========================
 
 async def reject_receipt_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+    # если пользователь вводит сумму,
+    # этот обработчик ничего не делает.
+
+    if context.user_data.get(
+        "waiting_for_amount",
+        False,
+    ):
+        return
 
     if not context.user_data.get(
         "waiting_for_receipt",
@@ -1361,27 +1252,10 @@ async def run_bot():
         )
     )
 
-    # =================================
-    # НОВОЕ:
-    # СООБЩЕНИЕ ОТ АДМИНА ПОСЛЕ
-    # ПОДТВЕРЖДЕНИЯ
-    #
-    # Срабатывает ТОЛЬКО для ADMIN_ID.
-    # Поэтому пользовательские сообщения
-    # эта функция не перехватывает.
-    # =================================
+    # =========================
+    # DOCUMENT — КВИТАНЦИЯ
+    # =========================
 
-    application.add_handler(
-        MessageHandler(
-            filters.User(
-                user_id=ADMIN_ID
-            )
-            & ~filters.COMMAND,
-            admin_delivery_handler,
-        )
-    )
-
-    # ТОЛЬКО DOCUMENT
     application.add_handler(
         MessageHandler(
             filters.Document.ALL,
@@ -1389,24 +1263,40 @@ async def run_bot():
         )
     )
 
-    # Фото/текст во время ожидания файла
+    # =========================
+    # СВОЯ СУММА
+    #
+    # Этот обработчик теперь
+    # находится ДО обработчика
+    # отклонения текста.
+    # =========================
+
     application.add_handler(
         MessageHandler(
-            (
-                filters.PHOTO
-                | filters.TEXT
-            ) & ~filters.COMMAND,
+            filters.TEXT
+            & ~filters.COMMAND,
+            custom_amount_handler,
+        )
+    )
+
+    # =========================
+    # ФОТО / ТЕКСТ ПРИ КВИТАНЦИИ
+    # =========================
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO,
             reject_receipt_message,
         )
     )
 
-    # Своя сумма
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            custom_amount_handler,
-        )
-    )
+    # ВАЖНО:
+    # отдельный TEXT здесь НЕ нужен,
+    # потому что текст уже обрабатывается
+    # custom_amount_handler выше.
+    #
+    # reject_receipt_message проверяет
+    # waiting_for_receipt внутри себя.
 
     await application.initialize()
 
