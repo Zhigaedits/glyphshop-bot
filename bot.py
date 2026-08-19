@@ -3,12 +3,13 @@ import asyncio
 from threading import Thread
 
 from flask import Flask
+
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    CopyTextButton,
     Update,
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -29,17 +30,17 @@ ADMIN_ID = 816157991
 GLYPHS_PER_TENGE = 100000 / 180
 
 PACKAGES = {
-    "100": "50 000",
-    "300": "165 000",
-    "500": "275 000",
-    "1000": "555 000",
-    "2000": "1 110 000",
-    "3000": "1 665 000",
+    "100": 50000,
+    "300": 165000,
+    "500": 275000,
+    "1000": 555000,
+    "2000": 1110000,
+    "3000": 1665000,
 }
 
 
 # =========================
-# WEB-СЕРВЕР ДЛЯ RENDER
+# RENDER WEB SERVER
 # =========================
 
 web_app = Flask(__name__)
@@ -52,18 +53,39 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    web_app.run(host="0.0.0.0", port=port)
+    web_app.run(
+        host="0.0.0.0",
+        port=port,
+    )
 
 
 # =========================
 # /START
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     keyboard = [
-        [InlineKeyboardButton("🛒 Магазин", callback_data="shop")],
-        [InlineKeyboardButton("📦 Мои покупки", callback_data="purchases")],
-        [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
+        [
+            InlineKeyboardButton(
+                "🛒 Магазин",
+                callback_data="shop",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📦 Мои покупки",
+                callback_data="purchases",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "ℹ️ Помощь",
+                callback_data="help",
+            )
+        ],
     ]
 
     await update.message.reply_text(
@@ -75,35 +97,77 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# ПОКАЗ ОПЛАТЫ
+# МАГАЗИН
+# =========================
+
+async def show_shop(
+    query,
+):
+    keyboard = []
+
+    for price, glyphs in PACKAGES.items():
+        glyphs_text = f"{glyphs:,}".replace(",", " ")
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"💎 {price} ₸ — {glyphs_text} Glyphs",
+                callback_data=f"pack_{price}",
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "💰 Своя сумма",
+            callback_data="custom_amount",
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 Назад",
+            callback_data="back",
+        )
+    ])
+
+    await query.edit_message_text(
+        "🛒 GlyphShop\n\n"
+        "Выберите пакет или укажите свою сумму:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# =========================
+# СТРАНИЦА ОПЛАТЫ
 # =========================
 
 async def show_payment(
     query,
-    context,
     price,
     glyphs,
 ):
-    card_number = os.environ.get("CARD_NUMBER", "")
-    card_name = os.environ.get("CARD_NAME", "")
+    card_number = os.environ.get(
+        "CARD_NUMBER",
+        "Карта не настроена",
+    )
 
-    if not card_number:
-        card_number = "Номер карты не настроен"
+    card_name = os.environ.get(
+        "CARD_NAME",
+        "Имя не настроено",
+    )
 
-    if not card_name:
-        card_name = "Имя владельца не настроено"
+    glyphs_text = f"{int(glyphs):,}".replace(",", " ")
 
     keyboard = [
         [
             InlineKeyboardButton(
-                "📋 Скопировать номер",
-                copy_text=CopyTextButton(card_number),
+                f"💳 {card_number}",
+                callback_data="card_info",
             )
         ],
         [
             InlineKeyboardButton(
-                "✅ Я оплатил",
-                callback_data=f"paid_{price}_{glyphs}",
+                "💳 Я перевёл деньги",
+                callback_data=f"paid_{price}_{int(glyphs)}",
             )
         ],
         [
@@ -115,172 +179,108 @@ async def show_payment(
     ]
 
     await query.edit_message_text(
-        f"💎 Вы выбрали: {glyphs:,} Glyphs\n"
+        f"💎 Glyphs: {glyphs_text}\n"
         f"💰 Сумма: {price} ₸\n\n"
-        f"💳 Номер карты:\n{card_number}\n\n"
+        f"💳 Карта:\n{card_number}\n"
         f"👤 Владелец: {card_name}\n\n"
-        "После перевода нажмите «✅ Я оплатил»."
-        .replace(",", " "),
+        "После перевода нажмите "
+        "«💳 Я перевёл деньги».",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 # =========================
-# КНОПКИ
+# ОБРАБОТКА КНОПОК
 # =========================
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buttons(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
+
     await query.answer()
+
+    data = query.data
 
     # -------------------------
     # МАГАЗИН
     # -------------------------
 
-    if query.data == "shop":
-        keyboard = []
-
-        for price, glyphs in PACKAGES.items():
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"💎 {price} ₸ — {glyphs} Glyphs",
-                    callback_data=f"pack_{price}",
-                )
-            ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "💰 Своя сумма",
-                callback_data="custom_amount",
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Назад",
-                callback_data="back",
-            )
-        ])
-
-        await query.edit_message_text(
-            "🛒 GlyphShop\n\n"
-            "Выберите готовый пакет или укажите свою сумму:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+    if data == "shop":
+        await show_shop(query)
+        return
 
     # -------------------------
-    # ГОТОВЫЙ ПАКЕТ
+    # ПАКЕТ
     # -------------------------
 
-    elif query.data.startswith("pack_"):
-        price = query.data.replace("pack_", "")
-        glyphs = PACKAGES.get(price)
+    if data.startswith("pack_"):
+        price = data.replace("pack_", "")
 
-        if not glyphs:
+        if price not in PACKAGES:
             await query.answer(
                 "❌ Пакет не найден.",
                 show_alert=True,
             )
             return
 
+        glyphs = PACKAGES[price]
+
         await show_payment(
             query,
-            context,
             price,
             glyphs,
         )
+        return
 
     # -------------------------
     # СВОЯ СУММА
     # -------------------------
 
-    elif query.data == "custom_amount":
+    if data == "custom_amount":
         context.user_data["waiting_for_amount"] = True
 
         await query.edit_message_text(
             "💰 Своя сумма\n\n"
-            "Напишите сумму в тенге одним сообщением.\n\n"
+            "Напишите сумму в тенге.\n\n"
             "Например:\n"
             "875\n\n"
             "Курс:\n"
-            "100 000 Glyphs = 180 ₸"
-        )
-
-    # -------------------------
-    # МОИ ПОКУПКИ
-    # -------------------------
-
-    elif query.data == "purchases":
-        await query.edit_message_text(
-            "📦 Мои покупки\n\n"
-            "Покупки пока не подключены.",
+            "100 000 Glyphs = 180 ₸",
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
                         "🔙 Назад",
-                        callback_data="back",
+                        callback_data="shop",
                     )
                 ]
             ]),
         )
+        return
 
     # -------------------------
-    # ПОМОЩЬ
+    # КАРТА
     # -------------------------
 
-    elif query.data == "help":
-        await query.edit_message_text(
-            "ℹ️ Помощь\n\n"
-            "Если возникли проблемы с покупкой, "
-            "обратитесь к администратору.",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🔙 Назад",
-                        callback_data="back",
-                    )
-                ]
-            ]),
+    if data == "card_info":
+        card_number = os.environ.get(
+            "CARD_NUMBER",
+            "Карта не настроена",
         )
 
-    # -------------------------
-    # НАЗАД
-    # -------------------------
-
-    elif query.data == "back":
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "🛒 Магазин",
-                    callback_data="shop",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "📦 Мои покупки",
-                    callback_data="purchases",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "ℹ️ Помощь",
-                    callback_data="help",
-                )
-            ],
-        ]
-
-        await query.edit_message_text(
-            "👋 Добро пожаловать в GlyphShop!\n\n"
-            "💎 Здесь вы можете приобрести Glyphs.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+        await query.answer(
+            f"Номер карты: {card_number}",
+            show_alert=True,
         )
+        return
 
     # -------------------------
     # Я ОПЛАТИЛ
     # -------------------------
 
-    elif query.data.startswith("paid_"):
-        parts = query.data.split("_", 2)
+    if data.startswith("paid_"):
+        parts = data.split("_")
 
         if len(parts) != 3:
             await query.answer(
@@ -300,8 +300,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = user.full_name
 
         await query.edit_message_text(
-            "⏳ Заявка отправлена администратору.\n\n"
-            "После проверки оплаты ожидайте подтверждения."
+            "⏳ Заявка отправлена.\n\n"
+            "Администратор проверит перевод "
+            "и сообщит о результате."
         )
 
         if ADMIN_ID:
@@ -312,21 +313,109 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👤 Пользователь: {username}\n"
                     f"🆔 ID: {user.id}\n"
                     f"💰 Сумма: {price} ₸\n"
-                    f"💎 Glyphs: {glyphs}\n\n"
-                    "⚠️ Проверьте поступление оплаты вручную."
+                    f"💎 Glyphs: {int(glyphs):,}\n\n"
+                    "⚠️ Проверьте поступление перевода вручную."
+                    .replace(",", " ")
                 ),
             )
 
+        return
+
+    # -------------------------
+    # МОИ ПОКУПКИ
+    # -------------------------
+
+    if data == "purchases":
+        await query.edit_message_text(
+            "📦 Мои покупки\n\n"
+            "История покупок пока не подключена.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Назад",
+                        callback_data="back",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    # -------------------------
+    # ПОМОЩЬ
+    # -------------------------
+
+    if data == "help":
+        await query.edit_message_text(
+            "ℹ️ Помощь\n\n"
+            "Выберите пакет или укажите свою сумму.\n"
+            "После перевода нажмите кнопку оплаты.\n\n"
+            "Если возникли проблемы, обратитесь "
+            "к администратору.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Назад",
+                        callback_data="back",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    # -------------------------
+    # НАЗАД
+    # -------------------------
+
+    if data == "back":
+        await start_from_button(query)
+        return
+
 
 # =========================
-# СВОЯ СУММА — ОБРАБОТКА
+# ГЛАВНОЕ МЕНЮ ИЗ КНОПКИ
+# =========================
+
+async def start_from_button(query):
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🛒 Магазин",
+                callback_data="shop",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📦 Мои покупки",
+                callback_data="purchases",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "ℹ️ Помощь",
+                callback_data="help",
+            )
+        ],
+    ]
+
+    await query.edit_message_text(
+        "👋 Добро пожаловать в GlyphShop!\n\n"
+        "💎 Здесь вы можете приобрести Glyphs.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# =========================
+# СВОЯ СУММА
 # =========================
 
 async def custom_amount_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    if not context.user_data.get("waiting_for_amount"):
+    if not context.user_data.get(
+        "waiting_for_amount",
+        False,
+    ):
         return
 
     text = update.message.text.strip()
@@ -348,21 +437,26 @@ async def custom_amount_handler(
 
     if price > 1000000:
         await update.message.reply_text(
-            "❌ Слишком большая сумма."
+            "❌ Максимальная сумма — 1 000 000 ₸."
         )
         return
 
     context.user_data["waiting_for_amount"] = False
 
-    glyphs_number = int(price * GLYPHS_PER_TENGE)
+    glyphs = int(
+        price * GLYPHS_PER_TENGE
+    )
 
-    glyphs_display = f"{glyphs_number:,}".replace(",", " ")
+    glyphs_text = f"{glyphs:,}".replace(
+        ",",
+        " ",
+    )
 
     keyboard = [
         [
             InlineKeyboardButton(
                 "💳 Оплатить",
-                callback_data=f"custompay_{price}_{glyphs_number}",
+                callback_data=f"custompay_{price}_{glyphs}",
             )
         ],
         [
@@ -374,25 +468,26 @@ async def custom_amount_handler(
     ]
 
     await update.message.reply_text(
-        f"💰 Ваша сумма: {price} ₸\n"
-        f"💎 Вы получите: {glyphs_display} Glyphs\n\n"
-        "Нажмите «💳 Оплатить», чтобы продолжить.",
+        f"💰 Сумма: {price} ₸\n"
+        f"💎 Вы получите: {glyphs_text} Glyphs\n\n"
+        "Нажмите «💳 Оплатить».",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 # =========================
-# КНОПКА ОПЛАТИТЬ ДЛЯ СВОЕЙ СУММЫ
+# ОПЛАТА СВОЕЙ СУММЫ
 # =========================
 
-async def custom_payment_button(
+async def custom_payment(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
     query = update.callback_query
+
     await query.answer()
 
-    parts = query.data.split("_", 2)
+    parts = query.data.split("_")
 
     if len(parts) != 3:
         await query.answer(
@@ -406,7 +501,6 @@ async def custom_payment_button(
 
     await show_payment(
         query,
-        context,
         price,
         glyphs,
     )
@@ -431,18 +525,23 @@ async def run_bot():
     )
 
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start,
+        )
     )
 
     application.add_handler(
         CallbackQueryHandler(
-            custom_payment_button,
+            custom_payment,
             pattern=r"^custompay_",
         )
     )
 
     application.add_handler(
-        CallbackQueryHandler(buttons)
+        CallbackQueryHandler(
+            buttons,
+        )
     )
 
     application.add_handler(
@@ -453,12 +552,15 @@ async def run_bot():
     )
 
     await application.initialize()
+
     await application.start()
+
     await application.updater.start_polling()
 
     try:
         while True:
             await asyncio.sleep(3600)
+
     finally:
         await application.updater.stop()
         await application.stop()
@@ -473,7 +575,9 @@ def main():
 
     web_thread.start()
 
-    asyncio.run(run_bot())
+    asyncio.run(
+        run_bot()
+    )
 
 
 if __name__ == "__main__":
