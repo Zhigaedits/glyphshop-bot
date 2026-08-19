@@ -53,6 +53,7 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
+
     web_app.run(
         host="0.0.0.0",
         port=port,
@@ -67,6 +68,10 @@ async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    context.user_data.pop("waiting_for_amount", None)
+    context.user_data.pop("pending_order", None)
+    context.user_data.pop("receipt_sent", None)
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -100,12 +105,11 @@ async def start(
 # МАГАЗИН
 # =========================
 
-async def show_shop(
-    query,
-):
+async def show_shop(query):
     keyboard = []
 
     for price, glyphs in PACKAGES.items():
+
         glyphs_text = f"{glyphs:,}".replace(",", " ")
 
         keyboard.append([
@@ -142,6 +146,7 @@ async def show_shop(
 
 async def show_payment(
     query,
+    context,
     price,
     glyphs,
 ):
@@ -155,7 +160,18 @@ async def show_payment(
         "Имя не настроено",
     )
 
-    glyphs_text = f"{int(glyphs):,}".replace(",", " ")
+    glyphs = int(glyphs)
+    price = int(price)
+
+    glyphs_text = f"{glyphs:,}".replace(",", " ")
+
+    # Запоминаем заказ пользователя
+    context.user_data["pending_order"] = {
+        "price": price,
+        "glyphs": glyphs,
+    }
+
+    context.user_data["receipt_sent"] = False
 
     keyboard = [
         [
@@ -164,12 +180,14 @@ async def show_payment(
                 callback_data="card_info",
             )
         ],
+
         [
             InlineKeyboardButton(
-                "💳 Я перевёл деньги",
-                callback_data=f"paid_{price}_{int(glyphs)}",
+                "📎 Отправить квитанцию",
+                callback_data="send_receipt",
             )
         ],
+
         [
             InlineKeyboardButton(
                 "🔙 Назад",
@@ -183,14 +201,15 @@ async def show_payment(
         f"💰 Сумма: {price} ₸\n\n"
         f"💳 Карта:\n{card_number}\n"
         f"👤 Владелец: {card_name}\n\n"
-        "После перевода нажмите "
-        "«💳 Я перевёл деньги».",
+        "1️⃣ Переведите указанную сумму.\n"
+        "2️⃣ Нажмите «📎 Отправить квитанцию».\n"
+        "3️⃣ Отправьте файл или фото квитанции.",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 # =========================
-# ОБРАБОТКА КНОПОК
+# КНОПКИ
 # =========================
 
 async def buttons(
@@ -216,6 +235,7 @@ async def buttons(
     # -------------------------
 
     if data.startswith("pack_"):
+
         price = data.replace("pack_", "")
 
         if price not in PACKAGES:
@@ -229,9 +249,11 @@ async def buttons(
 
         await show_payment(
             query,
+            context,
             price,
             glyphs,
         )
+
         return
 
     # -------------------------
@@ -239,6 +261,7 @@ async def buttons(
     # -------------------------
 
     if data == "custom_amount":
+
         context.user_data["waiting_for_amount"] = True
 
         await query.edit_message_text(
@@ -257,6 +280,7 @@ async def buttons(
                 ]
             ]),
         )
+
         return
 
     # -------------------------
@@ -264,6 +288,7 @@ async def buttons(
     # -------------------------
 
     if data == "card_info":
+
         card_number = os.environ.get(
             "CARD_NUMBER",
             "Карта не настроена",
@@ -273,24 +298,67 @@ async def buttons(
             f"Номер карты: {card_number}",
             show_alert=True,
         )
+
         return
 
     # -------------------------
-    # Я ОПЛАТИЛ
+    # ОТПРАВИТЬ КВИТАНЦИЮ
     # -------------------------
 
-    if data.startswith("paid_"):
-        parts = data.split("_")
+    if data == "send_receipt":
 
-        if len(parts) != 3:
+        order = context.user_data.get(
+            "pending_order"
+        )
+
+        if not order:
             await query.answer(
-                "❌ Ошибка заявки.",
+                "❌ Сначала выберите пакет.",
                 show_alert=True,
             )
             return
 
-        price = parts[1]
-        glyphs = parts[2]
+        await query.edit_message_text(
+            "📎 Отправьте сюда квитанцию.\n\n"
+            "Можно отправить файл или фото "
+            "квитанции из Kaspi.\n\n"
+            "После отправки появится кнопка "
+            "«✅ Я оплатил счёт»."
+        )
+
+        context.user_data["waiting_for_receipt"] = True
+
+        return
+
+    # -------------------------
+    # Я ОПЛАТИЛ СЧЁТ
+    # -------------------------
+
+    if data == "paid_confirm":
+
+        order = context.user_data.get(
+            "pending_order"
+        )
+
+        if not order:
+            await query.answer(
+                "❌ Заказ не найден.",
+                show_alert=True,
+            )
+            return
+
+        if not context.user_data.get(
+            "receipt_sent",
+            False,
+        ):
+            await query.answer(
+                "❌ Сначала отправьте квитанцию.",
+                show_alert=True,
+            )
+            return
+
+        price = order["price"]
+        glyphs = order["glyphs"]
 
         user = query.from_user
 
@@ -301,23 +369,120 @@ async def buttons(
 
         await query.edit_message_text(
             "⏳ Заявка отправлена.\n\n"
-            "Администратор проверит перевод "
-            "и сообщит о результате."
+            "Квитанция передана администратору.\n"
+            "Ожидайте подтверждения оплаты."
         )
 
-        if ADMIN_ID:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    "💰 НОВАЯ ЗАЯВКА\n\n"
-                    f"👤 Пользователь: {username}\n"
-                    f"🆔 ID: {user.id}\n"
-                    f"💰 Сумма: {price} ₸\n"
-                    f"💎 Glyphs: {int(glyphs):,}\n\n"
-                    "⚠️ Проверьте поступление перевода вручную."
-                    .replace(",", " ")
-                ),
+        # Сообщение админу
+        admin_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Подтвердить оплату",
+                    callback_data=f"admin_confirm_{user.id}_{price}_{glyphs}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Отклонить",
+                    callback_data=f"admin_reject_{user.id}",
+                )
+            ],
+        ])
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "💰 ПОДТВЕРЖДЕНИЕ ОПЛАТЫ\n\n"
+                f"👤 Пользователь: {username}\n"
+                f"🆔 ID: {user.id}\n"
+                f"💰 Сумма: {price} ₸\n"
+                f"💎 Glyphs: {glyphs:,}\n\n"
+                "📎 Квитанция была отправлена выше."
+                .replace(",", " ")
+            ),
+            reply_markup=admin_keyboard,
+        )
+
+        return
+
+    # -------------------------
+    # АДМИН: ПОДТВЕРДИТЬ
+    # -------------------------
+
+    if data.startswith("admin_confirm_"):
+
+        if query.from_user.id != ADMIN_ID:
+            await query.answer(
+                "❌ Нет доступа.",
+                show_alert=True,
             )
+            return
+
+        parts = data.split("_")
+
+        if len(parts) != 4:
+            await query.answer(
+                "❌ Ошибка заявки.",
+                show_alert=True,
+            )
+            return
+
+        user_id = parts[2]
+        price = parts[3]
+        glyphs = "0"
+
+        # В этой версии кнопка только подтверждает оплату.
+        # Автоматическая выдача Glyphs пока не включена.
+
+        await query.edit_message_text(
+            "✅ Оплата подтверждена.\n\n"
+            f"👤 ID: {user_id}\n"
+            f"💰 Сумма: {price} ₸\n\n"
+            "Glyphs автоматически пока не начисляются."
+        )
+
+        await context.bot.send_message(
+            chat_id=int(user_id),
+            text=(
+                "✅ Оплата подтверждена!\n\n"
+                "Ваш платёж проверен администратором."
+            ),
+        )
+
+        return
+
+    # -------------------------
+    # АДМИН: ОТКЛОНИТЬ
+    # -------------------------
+
+    if data.startswith("admin_reject_"):
+
+        if query.from_user.id != ADMIN_ID:
+            await query.answer(
+                "❌ Нет доступа.",
+                show_alert=True,
+            )
+            return
+
+        parts = data.split("_")
+
+        if len(parts) != 3:
+            return
+
+        user_id = parts[2]
+
+        await query.edit_message_text(
+            "❌ Оплата отклонена.\n\n"
+            f"👤 ID: {user_id}"
+        )
+
+        await context.bot.send_message(
+            chat_id=int(user_id),
+            text=(
+                "❌ Оплата не подтверждена.\n\n"
+                "Пожалуйста, свяжитесь с администратором."
+            ),
+        )
 
         return
 
@@ -326,6 +491,7 @@ async def buttons(
     # -------------------------
 
     if data == "purchases":
+
         await query.edit_message_text(
             "📦 Мои покупки\n\n"
             "История покупок пока не подключена.",
@@ -338,6 +504,7 @@ async def buttons(
                 ]
             ]),
         )
+
         return
 
     # -------------------------
@@ -345,10 +512,11 @@ async def buttons(
     # -------------------------
 
     if data == "help":
+
         await query.edit_message_text(
             "ℹ️ Помощь\n\n"
             "Выберите пакет или укажите свою сумму.\n"
-            "После перевода нажмите кнопку оплаты.\n\n"
+            "После оплаты отправьте квитанцию.\n\n"
             "Если возникли проблемы, обратитесь "
             "к администратору.",
             reply_markup=InlineKeyboardMarkup([
@@ -360,6 +528,7 @@ async def buttons(
                 ]
             ]),
         )
+
         return
 
     # -------------------------
@@ -367,15 +536,18 @@ async def buttons(
     # -------------------------
 
     if data == "back":
+
         await start_from_button(query)
+
         return
 
 
 # =========================
-# ГЛАВНОЕ МЕНЮ ИЗ КНОПКИ
+# ГЛАВНОЕ МЕНЮ
 # =========================
 
 async def start_from_button(query):
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -412,6 +584,7 @@ async def custom_amount_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
     if not context.user_data.get(
         "waiting_for_amount",
         False,
@@ -422,23 +595,30 @@ async def custom_amount_handler(
 
     try:
         price = int(text)
+
     except ValueError:
+
         await update.message.reply_text(
             "❌ Введите сумму только цифрами.\n\n"
             "Например: 875"
         )
+
         return
 
     if price < 1:
+
         await update.message.reply_text(
             "❌ Сумма должна быть больше 0 ₸."
         )
+
         return
 
     if price > 1000000:
+
         await update.message.reply_text(
             "❌ Максимальная сумма — 1 000 000 ₸."
         )
+
         return
 
     context.user_data["waiting_for_amount"] = False
@@ -483,6 +663,7 @@ async def custom_payment(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
     query = update.callback_query
 
     await query.answer()
@@ -490,10 +671,12 @@ async def custom_payment(
     parts = query.data.split("_")
 
     if len(parts) != 3:
+
         await query.answer(
             "❌ Ошибка.",
             show_alert=True,
         )
+
         return
 
     price = parts[1]
@@ -501,8 +684,119 @@ async def custom_payment(
 
     await show_payment(
         query,
+        context,
         price,
         glyphs,
+    )
+
+
+# =========================
+# ПОЛУЧЕНИЕ КВИТАНЦИИ
+# =========================
+
+async def receipt_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not context.user_data.get(
+        "waiting_for_receipt",
+        False,
+    ):
+        return
+
+    order = context.user_data.get(
+        "pending_order"
+    )
+
+    if not order:
+
+        await update.message.reply_text(
+            "❌ Заказ не найден. "
+            "Сначала выберите пакет."
+        )
+
+        return
+
+    user = update.effective_user
+
+    price = order["price"]
+    glyphs = order["glyphs"]
+
+    if user.username:
+        username = f"@{user.username}"
+    else:
+        username = user.full_name
+
+    # Запоминаем, что квитанция уже отправлена
+    context.user_data["waiting_for_receipt"] = False
+    context.user_data["receipt_sent"] = True
+
+    # Пересылаем ОРИГИНАЛ сообщения админу
+    try:
+
+        await context.bot.forward_message(
+            chat_id=ADMIN_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.message_id,
+        )
+
+    except Exception as e:
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "⚠️ Не удалось переслать квитанцию "
+                f"автоматически.\n\nОшибка: {e}"
+            ),
+        )
+
+    # Отдельная информация админу
+    admin_keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⏳ Ожидаем «Я оплатил счёт»",
+                callback_data="waiting_receipt",
+            )
+        ]
+    ])
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "📎 ПОЛУЧЕНА КВИТАНЦИЯ\n\n"
+            f"👤 Пользователь: {username}\n"
+            f"🆔 ID: {user.id}\n"
+            f"💰 Сумма: {price} ₸\n"
+            f"💎 Glyphs: {glyphs:,}\n\n"
+            "Пользователь должен нажать "
+            "«✅ Я оплатил счёт»."
+            .replace(",", " ")
+        ),
+        reply_markup=admin_keyboard,
+    )
+
+    # Покупателю показываем кнопку Я оплатил
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "✅ Я оплатил счёт",
+                callback_data="paid_confirm",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 В магазин",
+                callback_data="shop",
+            )
+        ],
+    ]
+
+    await update.message.reply_text(
+        "📎 Квитанция получена!\n\n"
+        "Теперь нажмите кнопку:\n"
+        "✅ «Я оплатил счёт»",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -511,9 +805,11 @@ async def custom_payment(
 # =========================
 
 async def run_bot():
+
     token = os.environ.get("BOT_TOKEN")
 
     if not token:
+
         raise RuntimeError(
             "BOT_TOKEN не установлен"
         )
@@ -524,6 +820,7 @@ async def run_bot():
         .build()
     )
 
+    # /start
     application.add_handler(
         CommandHandler(
             "start",
@@ -531,6 +828,7 @@ async def run_bot():
         )
     )
 
+    # Кнопка своей суммы → оплата
     application.add_handler(
         CallbackQueryHandler(
             custom_payment,
@@ -538,12 +836,26 @@ async def run_bot():
         )
     )
 
+    # Все остальные кнопки
     application.add_handler(
         CallbackQueryHandler(
             buttons,
         )
     )
 
+    # Получение квитанции:
+    # фото или документ
+    application.add_handler(
+        MessageHandler(
+            (
+                filters.Document.ALL
+                | filters.PHOTO
+            ),
+            receipt_handler,
+        )
+    )
+
+    # Ввод своей суммы
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -558,16 +870,20 @@ async def run_bot():
     await application.updater.start_polling()
 
     try:
+
         while True:
+
             await asyncio.sleep(3600)
 
     finally:
+
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
 
 
 def main():
+
     web_thread = Thread(
         target=run_web,
         daemon=True,
