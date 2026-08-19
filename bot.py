@@ -79,7 +79,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton(
                 "📋 Скопировать номер",
-                copy_text=card_number,
+                copy_text={"text": card_number},
             )],
             [InlineKeyboardButton(
                 "✅ Я оплатил",
