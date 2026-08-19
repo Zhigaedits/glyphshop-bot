@@ -1,17 +1,25 @@
 import os
 import asyncio
+from threading import Thread
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from flask import Flask
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+
+# Веб-сервер для Render
+web_app = Flask(__name__)
+
+
+@web_app.route("/")
+def home():
+    return "GlyphShop bot is running!"
+
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
+
 
 PACKAGES = {
     "100": "50 000",
@@ -21,10 +29,6 @@ PACKAGES = {
     "2000": "1 110 000",
     "3000": "1 665 000",
 }
-
-# Твой Telegram ID.
-# Пока оставляем пустым — следующим шагом добавим его в Render.
-ADMIN_ID = None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,60 +100,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    elif query.data.startswith("paid_"):
-        price = query.data.replace("paid_", "")
-        glyphs = PACKAGES[price]
-
-        user = query.from_user
-        username = f"@{user.username}" if user.username else user.full_name
-
-        await query.edit_message_text(
-            "⏳ Заявка отправлена.\n\n"
-            "Ожидайте подтверждения оплаты."
-        )
-
-        if ADMIN_ID:
-            keyboard = [[
-                InlineKeyboardButton(
-                    "✅ Подтвердить оплату",
-                    callback_data=f"confirm_{user.id}_{price}",
-                )
-            ]]
-
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    "💰 Новая заявка на оплату!\n\n"
-                    f"👤 Пользователь: {username}\n"
-                    f"🆔 ID: {user.id}\n"
-                    f"💰 Сумма: {price} ₸\n"
-                    f"💎 Пакет: {glyphs} Glyphs\n\n"
-                    "Проверьте поступление денег в Kaspi."
-                ),
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-
-    elif query.data.startswith("confirm_"):
-        if ADMIN_ID != query.from_user.id:
-            await query.answer("Недостаточно прав.", show_alert=True)
-            return
-
-        _, user_id, price = query.data.split("_")
-        glyphs = PACKAGES[price]
-
-        await context.bot.send_message(
-            chat_id=int(user_id),
-            text=(
-                "✅ Оплата подтверждена!\n\n"
-                f"💎 Вам начислено: {glyphs} Glyphs."
-            ),
-        )
-
-        await query.edit_message_text(
-            f"✅ Оплата подтверждена.\n"
-            f"💰 {price} ₸ → 💎 {glyphs} Glyphs"
-        )
-
     elif query.data == "purchases":
         await query.edit_message_text(
             "📦 Мои покупки\n\nПокупок пока нет.",
@@ -179,12 +129,30 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    elif query.data.startswith("paid_"):
+        price = query.data.replace("paid_", "")
+        glyphs = PACKAGES[price]
 
-async def main():
+        user = query.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+
+        await query.edit_message_text(
+            "⏳ Заявка на оплату отправлена.\n\n"
+            "Ожидайте подтверждения."
+        )
+
+        # Пока уведомление админу не подключено.
+        print(
+            f"PAYMENT REQUEST: {username} | "
+            f"{price} KZT | {glyphs} Glyphs"
+        )
+
+
+async def run_bot():
     token = os.environ.get("BOT_TOKEN")
 
     if not token:
-        raise RuntimeError("BOT_TOKEN не установлен в Render")
+        raise RuntimeError("BOT_TOKEN не установлен")
 
     application = Application.builder().token(token).build()
 
@@ -204,5 +172,12 @@ async def main():
         await application.shutdown()
 
 
+def main():
+    web_thread = Thread(target=run_web, daemon=True)
+    web_thread.start()
+
+    asyncio.run(run_bot())
+
+
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    main()
