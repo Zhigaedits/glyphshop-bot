@@ -1,7 +1,17 @@
 import os
 import asyncio
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 
 PACKAGES = {
     "100": "50 000",
@@ -11,6 +21,10 @@ PACKAGES = {
     "2000": "1 110 000",
     "3000": "1 665 000",
 }
+
+# Твой Telegram ID.
+# Пока оставляем пустым — следующим шагом добавим его в Render.
+ADMIN_ID = None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,10 +69,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = query.data.replace("pack_", "")
         glyphs = PACKAGES[price]
 
+        card_number = os.environ.get("CARD_NUMBER", "")
+        card_name = os.environ.get("CARD_NAME", "")
+
         keyboard = [
             [InlineKeyboardButton(
-                "💳 Оплатить",
-                callback_data=f"pay_{price}",
+                "📋 Скопировать номер",
+                copy_text=card_number,
+            )],
+            [InlineKeyboardButton(
+                "✅ Я оплатил",
+                callback_data=f"paid_{price}",
             )],
             [InlineKeyboardButton(
                 "🔙 Назад",
@@ -68,9 +89,65 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             f"💎 Пакет: {glyphs} Glyphs\n"
-            f"💰 Цена: {price} ₸\n\n"
-            "Оплата пока не подключена.",
+            f"💰 Сумма: {price} ₸\n\n"
+            f"💳 Карта: {card_number}\n"
+            f"👤 Владелец: {card_name}\n\n"
+            "После перевода нажмите «✅ Я оплатил».",
             reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif query.data.startswith("paid_"):
+        price = query.data.replace("paid_", "")
+        glyphs = PACKAGES[price]
+
+        user = query.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+
+        await query.edit_message_text(
+            "⏳ Заявка отправлена.\n\n"
+            "Ожидайте подтверждения оплаты."
+        )
+
+        if ADMIN_ID:
+            keyboard = [[
+                InlineKeyboardButton(
+                    "✅ Подтвердить оплату",
+                    callback_data=f"confirm_{user.id}_{price}",
+                )
+            ]]
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "💰 Новая заявка на оплату!\n\n"
+                    f"👤 Пользователь: {username}\n"
+                    f"🆔 ID: {user.id}\n"
+                    f"💰 Сумма: {price} ₸\n"
+                    f"💎 Пакет: {glyphs} Glyphs\n\n"
+                    "Проверьте поступление денег в Kaspi."
+                ),
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+
+    elif query.data.startswith("confirm_"):
+        if ADMIN_ID != query.from_user.id:
+            await query.answer("Недостаточно прав.", show_alert=True)
+            return
+
+        _, user_id, price = query.data.split("_")
+        glyphs = PACKAGES[price]
+
+        await context.bot.send_message(
+            chat_id=int(user_id),
+            text=(
+                "✅ Оплата подтверждена!\n\n"
+                f"💎 Вам начислено: {glyphs} Glyphs."
+            ),
+        )
+
+        await query.edit_message_text(
+            f"✅ Оплата подтверждена.\n"
+            f"💰 {price} ₸ → 💎 {glyphs} Glyphs"
         )
 
     elif query.data == "purchases":
@@ -102,14 +179,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    elif query.data.startswith("pay_"):
-        await query.edit_message_text(
-            "💳 Оплата пока не подключена.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Назад", callback_data="shop")]
-            ]),
-        )
-
 
 async def main():
     token = os.environ.get("BOT_TOKEN")
@@ -136,4 +205,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main()) 
