@@ -64,10 +64,7 @@ def run_web():
 # /START
 # =========================
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("waiting_for_amount", None)
     context.user_data.pop("pending_order", None)
     context.user_data.pop("receipt_sent", None)
@@ -109,7 +106,6 @@ async def show_shop(query):
     keyboard = []
 
     for price, glyphs in PACKAGES.items():
-
         glyphs_text = f"{glyphs:,}".replace(",", " ")
 
         keyboard.append([
@@ -144,12 +140,7 @@ async def show_shop(query):
 # СТРАНИЦА ОПЛАТЫ
 # =========================
 
-async def show_payment(
-    query,
-    context,
-    price,
-    glyphs,
-):
+async def show_payment(query, context, price, glyphs):
     card_number = os.environ.get(
         "CARD_NUMBER",
         "Карта не настроена",
@@ -165,7 +156,6 @@ async def show_payment(
 
     glyphs_text = f"{glyphs:,}".replace(",", " ")
 
-    # Запоминаем заказ пользователя
     context.user_data["pending_order"] = {
         "price": price,
         "glyphs": glyphs,
@@ -180,14 +170,12 @@ async def show_payment(
                 callback_data="card_info",
             )
         ],
-
         [
             InlineKeyboardButton(
                 "📎 Отправить квитанцию",
                 callback_data="send_receipt",
             )
         ],
-
         [
             InlineKeyboardButton(
                 "🔙 Назад",
@@ -212,30 +200,26 @@ async def show_payment(
 # КНОПКИ
 # =========================
 
-async def buttons(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     await query.answer()
 
     data = query.data
 
-    # -------------------------
+    # =========================
     # МАГАЗИН
-    # -------------------------
+    # =========================
 
     if data == "shop":
         await show_shop(query)
         return
 
-    # -------------------------
+    # =========================
     # ПАКЕТ
-    # -------------------------
+    # =========================
 
     if data.startswith("pack_"):
-
         price = data.replace("pack_", "")
 
         if price not in PACKAGES:
@@ -253,15 +237,13 @@ async def buttons(
             price,
             glyphs,
         )
-
         return
 
-    # -------------------------
+    # =========================
     # СВОЯ СУММА
-    # -------------------------
+    # =========================
 
     if data == "custom_amount":
-
         context.user_data["waiting_for_amount"] = True
 
         await query.edit_message_text(
@@ -280,15 +262,13 @@ async def buttons(
                 ]
             ]),
         )
-
         return
 
-    # -------------------------
+    # =========================
     # КАРТА
-    # -------------------------
+    # =========================
 
     if data == "card_info":
-
         card_number = os.environ.get(
             "CARD_NUMBER",
             "Карта не настроена",
@@ -298,18 +278,14 @@ async def buttons(
             f"Номер карты: {card_number}",
             show_alert=True,
         )
-
         return
 
-    # -------------------------
+    # =========================
     # ОТПРАВИТЬ КВИТАНЦИЮ
-    # -------------------------
+    # =========================
 
     if data == "send_receipt":
-
-        order = context.user_data.get(
-            "pending_order"
-        )
+        order = context.user_data.get("pending_order")
 
         if not order:
             await query.answer(
@@ -327,18 +303,14 @@ async def buttons(
         )
 
         context.user_data["waiting_for_receipt"] = True
-
         return
 
-    # -------------------------
+    # =========================
     # Я ОПЛАТИЛ СЧЁТ
-    # -------------------------
+    # =========================
 
     if data == "paid_confirm":
-
-        order = context.user_data.get(
-            "pending_order"
-        )
+        order = context.user_data.get("pending_order")
 
         if not order:
             await query.answer(
@@ -347,10 +319,7 @@ async def buttons(
             )
             return
 
-        if not context.user_data.get(
-            "receipt_sent",
-            False,
-        ):
+        if not context.user_data.get("receipt_sent", False):
             await query.answer(
                 "❌ Сначала отправьте квитанцию.",
                 show_alert=True,
@@ -373,12 +342,13 @@ async def buttons(
             "Ожидайте подтверждения оплаты."
         )
 
-        # Сообщение админу
         admin_keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
                     "✅ Подтвердить оплату",
-                    callback_data=f"admin_confirm_{user.id}_{price}_{glyphs}",
+                    callback_data=(
+                        f"admin_confirm_{user.id}_{price}_{glyphs}"
+                    ),
                 )
             ],
             [
@@ -398,62 +368,63 @@ async def buttons(
                 f"💰 Сумма: {price} ₸\n"
                 f"💎 Glyphs: {glyphs:,}\n\n"
                 "📎 Квитанция была отправлена выше."
-                .replace(",", " ")
-            ),
+            ).replace(",", " "),
             reply_markup=admin_keyboard,
         )
 
         return
 
-    # -------------------------
+    # =========================
     # АДМИН: ПОДТВЕРДИТЬ
-    # -------------------------
+    # =========================
 
     if data.startswith("admin_confirm_"):
 
-    if query.from_user.id != ADMIN_ID:
-        await query.answer(
-            "❌ Нет доступа.",
-            show_alert=True,
-        )
-        return
+        if query.from_user.id != ADMIN_ID:
+            await query.answer(
+                "❌ Нет доступа.",
+                show_alert=True,
+            )
+            return
 
-    parts = data.split("_")
+        parts = data.split("_")
 
-    if len(parts) != 5:
-        await query.answer(
-            "❌ Ошибка заявки.",
-            show_alert=True,
-        )
-        return
+        # ВАЖНО:
+        # admin_confirm_USER_ID_PRICE_GLYPHS
+        # = 5 частей
+        if len(parts) != 5:
+            await query.answer(
+                "❌ Ошибка заявки.",
+                show_alert=True,
+            )
+            return
 
-    user_id = parts[2]
-    price = parts[3]
-    glyphs = parts[4]
-
-        # В этой версии кнопка только подтверждает оплату.
-        # Автоматическая выдача Glyphs пока не включена.
+        user_id = parts[2]
+        price = parts[3]
+        glyphs = parts[4]
 
         await query.edit_message_text(
             "✅ Оплата подтверждена.\n\n"
             f"👤 ID: {user_id}\n"
-            f"💰 Сумма: {price} ₸\n\n"
-            "Glyphs автоматически пока не начисляются."
+            f"💰 Сумма: {price} ₸\n"
+            f"💎 Glyphs: {int(glyphs):,}".replace(",", " "),
         )
 
         await context.bot.send_message(
             chat_id=int(user_id),
             text=(
                 "✅ Оплата подтверждена!\n\n"
+                f"💰 Сумма: {price} ₸\n"
+                f"💎 Glyphs: {int(glyphs):,}\n\n"
                 "Ваш платёж проверен администратором."
-            ),
+            ).replace(",", " "),
         )
 
         return
 
-    # -------------------------
+    # =========================
     # АДМИН: ОТКЛОНИТЬ
-    # -------------------------
+    # =========================
 
     if data.startswith("admin_reject_"):
 
@@ -486,12 +457,11 @@ async def buttons(
 
         return
 
-    # -------------------------
+    # =========================
     # МОИ ПОКУПКИ
-    # -------------------------
+    # =========================
 
     if data == "purchases":
-
         await query.edit_message_text(
             "📦 Мои покупки\n\n"
             "История покупок пока не подключена.",
@@ -504,15 +474,13 @@ async def buttons(
                 ]
             ]),
         )
-
         return
 
-    # -------------------------
+    # =========================
     # ПОМОЩЬ
-    # -------------------------
+    # =========================
 
     if data == "help":
-
         await query.edit_message_text(
             "ℹ️ Помощь\n\n"
             "Выберите пакет или укажите свою сумму.\n"
@@ -528,17 +496,14 @@ async def buttons(
                 ]
             ]),
         )
-
         return
 
-    # -------------------------
+    # =========================
     # НАЗАД
-    # -------------------------
+    # =========================
 
     if data == "back":
-
         await start_from_button(query)
-
         return
 
 
@@ -547,7 +512,6 @@ async def buttons(
 # =========================
 
 async def start_from_button(query):
-
     keyboard = [
         [
             InlineKeyboardButton(
@@ -584,7 +548,6 @@ async def custom_amount_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-
     if not context.user_data.get(
         "waiting_for_amount",
         False,
@@ -597,40 +560,29 @@ async def custom_amount_handler(
         price = int(text)
 
     except ValueError:
-
         await update.message.reply_text(
             "❌ Введите сумму только цифрами.\n\n"
             "Например: 875"
         )
-
         return
 
     if price < 1:
-
         await update.message.reply_text(
             "❌ Сумма должна быть больше 0 ₸."
         )
-
         return
 
     if price > 1000000:
-
         await update.message.reply_text(
             "❌ Максимальная сумма — 1 000 000 ₸."
         )
-
         return
 
     context.user_data["waiting_for_amount"] = False
 
-    glyphs = int(
-        price * GLYPHS_PER_TENGE
-    )
+    glyphs = int(price * GLYPHS_PER_TENGE)
 
-    glyphs_text = f"{glyphs:,}".replace(
-        ",",
-        " ",
-    )
+    glyphs_text = f"{glyphs:,}".replace(",", " ")
 
     keyboard = [
         [
@@ -663,7 +615,6 @@ async def custom_payment(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-
     query = update.callback_query
 
     await query.answer()
@@ -671,12 +622,10 @@ async def custom_payment(
     parts = query.data.split("_")
 
     if len(parts) != 3:
-
         await query.answer(
             "❌ Ошибка.",
             show_alert=True,
         )
-
         return
 
     price = parts[1]
@@ -698,24 +647,19 @@ async def receipt_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-
     if not context.user_data.get(
         "waiting_for_receipt",
         False,
     ):
         return
 
-    order = context.user_data.get(
-        "pending_order"
-    )
+    order = context.user_data.get("pending_order")
 
     if not order:
-
         await update.message.reply_text(
             "❌ Заказ не найден. "
             "Сначала выберите пакет."
         )
-
         return
 
     user = update.effective_user
@@ -728,13 +672,11 @@ async def receipt_handler(
     else:
         username = user.full_name
 
-    # Запоминаем, что квитанция уже отправлена
     context.user_data["waiting_for_receipt"] = False
     context.user_data["receipt_sent"] = True
 
-    # Пересылаем ОРИГИНАЛ сообщения админу
+    # Пересылаем оригинальную квитанцию админу
     try:
-
         await context.bot.forward_message(
             chat_id=ADMIN_ID,
             from_chat_id=update.effective_chat.id,
@@ -742,24 +684,13 @@ async def receipt_handler(
         )
 
     except Exception as e:
-
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
-                "⚠️ Не удалось переслать квитанцию "
-                f"автоматически.\n\nОшибка: {e}"
+                "⚠️ Не удалось переслать квитанцию.\n\n"
+                f"Ошибка: {e}"
             ),
         )
-
-    # Отдельная информация админу
-    admin_keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "⏳ Ожидаем «Я оплатил счёт»",
-                callback_data="waiting_receipt",
-            )
-        ]
-    ])
 
     await context.bot.send_message(
         chat_id=ADMIN_ID,
@@ -771,12 +702,9 @@ async def receipt_handler(
             f"💎 Glyphs: {glyphs:,}\n\n"
             "Пользователь должен нажать "
             "«✅ Я оплатил счёт»."
-            .replace(",", " ")
-        ),
-        reply_markup=admin_keyboard,
+        ).replace(",", " "),
     )
 
-    # Покупателю показываем кнопку Я оплатил
     keyboard = [
         [
             InlineKeyboardButton(
@@ -794,7 +722,7 @@ async def receipt_handler(
 
     await update.message.reply_text(
         "📎 Квитанция получена!\n\n"
-        "Теперь нажмите кнопку:\n"
+        "Теперь нажмите:\n"
         "✅ «Я оплатил счёт»",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -809,7 +737,6 @@ async def run_bot():
     token = os.environ.get("BOT_TOKEN")
 
     if not token:
-
         raise RuntimeError(
             "BOT_TOKEN не установлен"
         )
@@ -820,7 +747,6 @@ async def run_bot():
         .build()
     )
 
-    # /start
     application.add_handler(
         CommandHandler(
             "start",
@@ -828,7 +754,6 @@ async def run_bot():
         )
     )
 
-    # Кнопка своей суммы → оплата
     application.add_handler(
         CallbackQueryHandler(
             custom_payment,
@@ -836,26 +761,19 @@ async def run_bot():
         )
     )
 
-    # Все остальные кнопки
     application.add_handler(
         CallbackQueryHandler(
             buttons,
         )
     )
 
-    # Получение квитанции:
-    # фото или документ
     application.add_handler(
         MessageHandler(
-            (
-                filters.Document.ALL
-                | filters.PHOTO
-            ),
+            filters.Document.ALL | filters.PHOTO,
             receipt_handler,
         )
     )
 
-    # Ввод своей суммы
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -870,13 +788,10 @@ async def run_bot():
     await application.updater.start_polling()
 
     try:
-
         while True:
-
             await asyncio.sleep(3600)
 
     finally:
-
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
@@ -891,9 +806,7 @@ def main():
 
     web_thread.start()
 
-    asyncio.run(
-        run_bot()
-    )
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
