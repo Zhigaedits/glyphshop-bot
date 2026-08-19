@@ -140,7 +140,26 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ Заявка на оплату отправлена.\n\n"
             "Ожидайте подтверждения."
         )
+        if ADMIN_ID:
+            keyboard = [[
+                InlineKeyboardButton(
+                    "✅ Подтвердить оплату",
+                    callback_data=f"confirm_{user.id}_{price}",
+                )
+            ]]
 
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "💰 Новая заявка на оплату!\n\n"
+                    f"👤 Пользователь: {username}\n"
+                    f"🆔 ID: {user.id}\n"
+                    f"💰 Сумма: {price} ₸\n"
+                    f"💎 Пакет: {glyphs} Glyphs\n\n"
+                    "Проверьте поступление денег."
+                ),
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
         # Пока уведомление админу не подключено.
         print(
             f"PAYMENT REQUEST: {username} | "
