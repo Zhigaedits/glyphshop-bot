@@ -1,29 +1,18 @@
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 PACKAGES = {
-    "100": ("50 000", 100),
-    "300": ("165 000", 300),
-    "500": ("275 000", 500),
-    "1000": ("555 000", 1000),
-    "2000": ("1 110 000", 2000),
-    "3000": ("1 665 000", 3000),
+    "100": "50 000",
+    "300": "165 000",
+    "500": "275 000",
+    "1000": "555 000",
+    "2000": "1 110 000",
+    "3000": "1 665 000",
 }
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "👋 Добро пожаловать в GlyphShop!\n\n"
-        "💎 Здесь вы можете приобрести Glyphs.\n\n"
-        "Выберите нужный раздел:"
-    )
-
     keyboard = [
         [InlineKeyboardButton("🛒 Магазин", callback_data="shop")],
         [InlineKeyboardButton("📦 Мои покупки", callback_data="purchases")],
@@ -31,25 +20,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        text,
+        "👋 Добро пожаловать в GlyphShop!\n\n"
+        "💎 Здесь вы можете приобрести Glyphs.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "shop":
-        keyboard = []
-
-        for price, (glyphs, _) in PACKAGES.items():
-            keyboard.append([
+        keyboard = [
+            [
                 InlineKeyboardButton(
                     f"💎 {price} ₸ — {glyphs} Glyphs",
                     callback_data=f"pack_{price}"
                 )
-            ])
+            ]
+            for price, glyphs in PACKAGES.items()
+        ]
 
         keyboard.append([
             InlineKeyboardButton("🔙 Назад", callback_data="back")
@@ -62,30 +52,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data.startswith("pack_"):
         price = query.data.replace("pack_", "")
-        glyphs, _ = PACKAGES[price]
+        glyphs = PACKAGES[price]
 
         keyboard = [
-            [InlineKeyboardButton(
-                "💳 Оплатить",
-                callback_data=f"pay_{price}"
-            )],
-            [InlineKeyboardButton(
-                "🔙 Назад",
-                callback_data="shop"
-            )],
+            [InlineKeyboardButton("💳 Оплатить", callback_data=f"pay_{price}")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="shop")]
         ]
 
         await query.edit_message_text(
-            f"💎 Пакет: {glyphs} Glyphs\n"
+            f"💎 {glyphs} Glyphs\n"
             f"💰 Цена: {price} ₸\n\n"
-            "Нажмите «Оплатить», чтобы продолжить.",
+            "Оплата пока не подключена.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     elif query.data == "purchases":
         await query.edit_message_text(
-            "📦 Ваши покупки\n\n"
-            "Пока покупок нет.",
+            "📦 Мои покупки\n\nПокупок пока нет.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="back")]
             ])
@@ -94,8 +77,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "help":
         await query.edit_message_text(
             "ℹ️ Помощь\n\n"
-            "Если у вас возникли проблемы с покупкой, "
-            "обратитесь к администратору.",
+            "Если возникли проблемы, обратитесь к администратору.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="back")]
             ])
@@ -109,15 +91,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         await query.edit_message_text(
-            "👋 Добро пожаловать в GlyphShop!\n\n"
-            "💎 Здесь вы можете приобрести Glyphs.",
+            "👋 Добро пожаловать в GlyphShop!",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     elif query.data.startswith("pay_"):
         await query.edit_message_text(
-            "💳 Оплата пока не подключена.\n\n"
-            "Скоро здесь появится способ оплаты.",
+            "💳 Оплата пока не подключена.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад", callback_data="shop")]
             ])
@@ -125,15 +105,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    token = os.environ.get("BOT_TOKEN")
-
-    if not token:
-        raise ValueError("BOT_TOKEN не установлен")
+    token = os.environ["BOT_TOKEN"]
 
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(CallbackQueryHandler(buttons))
 
     app.run_polling()
 
