@@ -288,6 +288,10 @@ async def show_payment(
         "waiting_for_receipt"
     ] = False
 
+    context.user_data[
+        "waiting_for_amount"
+    ] = False
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -354,6 +358,10 @@ async def buttons(
 
         context.user_data[
             "waiting_for_receipt"
+        ] = False
+
+        context.user_data[
+            "admin_sending_link"
         ] = False
 
         await show_shop(query)
@@ -667,8 +675,19 @@ async def buttons(
             f"💰 Сумма: "
             f"{transaction['price']} ₸\n"
             f"💎 Glyphs: "
-            f"{transaction['glyphs']:,}"
+            f"{transaction['glyphs']:,}\n"
             .replace(",", " "),
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔗 Отправить ссылку",
+                        callback_data=(
+                            "admin_send_link_"
+                            f"{transaction_id}"
+                        ),
+                    )
+                ]
+            ]),
         )
 
         await context.bot.send_message(
@@ -685,6 +704,71 @@ async def buttons(
                 f"{transaction['glyphs']:,}\n\n"
                 "Оплата успешно проверена."
             ).replace(",", " "),
+        )
+
+        return
+
+    # =========================
+    # ADMIN SEND LINK
+    # =========================
+
+    if data.startswith(
+        "admin_send_link_"
+    ):
+
+        if query.from_user.id != ADMIN_ID:
+
+            await query.answer(
+                "❌ Нет доступа.",
+                show_alert=True,
+            )
+
+            return
+
+        transaction_id = data.replace(
+            "admin_send_link_",
+            "",
+        )
+
+        transactions = load_transactions()
+
+        transaction = transactions.get(
+            transaction_id
+        )
+
+        if not transaction:
+
+            await query.answer(
+                "❌ Транзакция не найдена.",
+                show_alert=True,
+            )
+
+            return
+
+        if transaction["status"] != "confirmed":
+
+            await query.answer(
+                "❌ Сначала подтвердите оплату.",
+                show_alert=True,
+            )
+
+            return
+
+        # Сохраняем ИМЕННО эту транзакцию
+        # для последующей отправки ссылки.
+        context.user_data[
+            "admin_sending_link"
+        ] = True
+
+        context.user_data[
+            "admin_link_transaction_id"
+        ] = transaction_id
+
+        await query.message.reply_text(
+            "🔗 Отправьте ссылку сейчас.\n\n"
+            "Она будет отправлена пользователю:\n"
+            f"🆔 {transaction['user_id']}\n\n"
+            f"🧾 Транзакция: {transaction_id}"
         )
 
         return
@@ -885,6 +969,10 @@ async def buttons(
             "waiting_for_receipt"
         ] = False
 
+        context.user_data[
+            "admin_sending_link"
+        ] = False
+
         await start_from_button(query)
 
         return
@@ -935,16 +1023,11 @@ async def custom_amount_handler(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    # ВАЖНО:
-    # Этот обработчик работает ТОЛЬКО
-    # когда пользователь действительно
-    # находится в режиме ввода суммы.
-
     if not context.user_data.get(
         "waiting_for_amount",
         False,
     ):
-        return
+        return False
 
     text = update.message.text.strip()
 
@@ -958,7 +1041,7 @@ async def custom_amount_handler(
             "Например: 875"
         )
 
-        return
+        return True
 
     if price < 1:
 
@@ -966,7 +1049,7 @@ async def custom_amount_handler(
             "❌ Сумма должна быть больше 0 ₸."
         )
 
-        return
+        return True
 
     if price > 1000000:
 
@@ -975,7 +1058,7 @@ async def custom_amount_handler(
             "1 000 000 ₸."
         )
 
-        return
+        return True
 
     context.user_data[
         "waiting_for_amount"
@@ -1019,6 +1102,8 @@ async def custom_amount_handler(
         ),
     )
 
+    return True
+
 
 # =========================
 # CUSTOM PAYMENT
@@ -1053,6 +1138,119 @@ async def custom_payment(
         price,
         glyphs,
     )
+
+
+# =========================
+# ОТПРАВКА ССЫЛКИ ПОЛЬЗОВАТЕЛЮ
+# =========================
+
+async def admin_link_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if update.effective_user.id != ADMIN_ID:
+        return False
+
+    if not context.user_data.get(
+        "admin_sending_link",
+        False,
+    ):
+        return False
+
+    transaction_id = context.user_data.get(
+        "admin_link_transaction_id"
+    )
+
+    if not transaction_id:
+        context.user_data[
+            "admin_sending_link"
+        ] = False
+
+        await update.message.reply_text(
+            "❌ Транзакция не найдена."
+        )
+
+        return True
+
+    transactions = load_transactions()
+
+    transaction = transactions.get(
+        transaction_id
+    )
+
+    if not transaction:
+        context.user_data[
+            "admin_sending_link"
+        ] = False
+
+        await update.message.reply_text(
+            "❌ Транзакция не найдена."
+        )
+
+        return True
+
+    if transaction["status"] != "confirmed":
+        context.user_data[
+            "admin_sending_link"
+        ] = False
+
+        await update.message.reply_text(
+            "❌ Эта транзакция ещё не подтверждена."
+        )
+
+        return True
+
+    # Получаем текст администратора.
+    # Если это ссылка — отправляем её как обычное
+    # сообщение, Telegram сделает её кликабельной.
+    link_text = update.message.text.strip()
+
+    if not link_text:
+        await update.message.reply_text(
+            "❌ Отправьте ссылку текстовым сообщением."
+        )
+
+        return True
+
+    target_user_id = int(
+        transaction["user_id"]
+    )
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                "🔗 Ваша ссылка:\n\n"
+                f"{link_text}"
+            ),
+        )
+
+    except Exception as error:
+
+        await update.message.reply_text(
+            "❌ Не удалось отправить ссылку "
+            f"пользователю.\n\nОшибка: {error}"
+        )
+
+        return True
+
+    context.user_data[
+        "admin_sending_link"
+    ] = False
+
+    context.user_data[
+        "admin_link_transaction_id"
+    ] = None
+
+    await update.message.reply_text(
+        "✅ Ссылка отправлена!\n\n"
+        f"🧾 Транзакция: {transaction_id}\n"
+        f"🆔 Получатель: {target_user_id}"
+    )
+
+    return True
 
 
 # =========================
@@ -1127,14 +1325,12 @@ async def receipt_handler(
         "waiting_for_receipt"
     ] = False
 
-    # Пересылаем файл админу
     await context.bot.forward_message(
         chat_id=ADMIN_ID,
         from_chat_id=update.effective_chat.id,
         message_id=update.message.message_id,
     )
 
-    # Информация админу
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
@@ -1177,23 +1373,54 @@ async def receipt_handler(
 
 
 # =========================
-# НЕ ДОКУМЕНТЫ ПРИ КВИТАНЦИИ
+# ЕДИНЫЙ ОБРАБОТЧИК ТЕКСТА
 # =========================
 
-async def reject_receipt_message(
+async def text_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
-    # если пользователь вводит сумму,
-    # этот обработчик ничего не делает.
-
-    if context.user_data.get(
-        "waiting_for_amount",
-        False,
+    # 1. Сначала проверяем отправку ссылки админом.
+    if await admin_link_handler(
+        update,
+        context,
     ):
         return
+
+    # 2. Затем собственную сумму.
+    if await custom_amount_handler(
+        update,
+        context,
+    ):
+        return
+
+    # 3. Если пользователь ждёт квитанцию,
+    # текст не принимается.
+    if context.user_data.get(
+        "waiting_for_receipt",
+        False,
+    ):
+
+        await update.message.reply_text(
+            "❌ Квитанция принимается "
+            "ТОЛЬКО КАК ФАЙЛ.\n\n"
+            "📎 Отправьте файл квитанции "
+            "через Telegram как документ.\n\n"
+            "Фото и текст не принимаются."
+        )
+
+        return
+
+
+# =========================
+# ФОТО ПРИ ОЖИДАНИИ КВИТАНЦИИ
+# =========================
+
+async def reject_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
 
     if not context.user_data.get(
         "waiting_for_receipt",
@@ -1206,7 +1433,7 @@ async def reject_receipt_message(
         "ТОЛЬКО КАК ФАЙЛ.\n\n"
         "📎 Отправьте файл квитанции "
         "через Telegram как документ.\n\n"
-        "Фото и текст не принимаются."
+        "Фото не принимаются."
     )
 
 
@@ -1264,39 +1491,32 @@ async def run_bot():
     )
 
     # =========================
-    # СВОЯ СУММА
+    # TEXT
     #
-    # Этот обработчик теперь
-    # находится ДО обработчика
-    # отклонения текста.
+    # Один обработчик правильно
+    # распределяет:
+    # - сумму;
+    # - ссылку админа;
+    # - текст при ожидании квитанции.
     # =========================
 
     application.add_handler(
         MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            custom_amount_handler,
+            filters.TEXT & ~filters.COMMAND,
+            text_handler,
         )
     )
 
     # =========================
-    # ФОТО / ТЕКСТ ПРИ КВИТАНЦИИ
+    # PHOTO
     # =========================
 
     application.add_handler(
         MessageHandler(
             filters.PHOTO,
-            reject_receipt_message,
+            reject_photo,
         )
     )
-
-    # ВАЖНО:
-    # отдельный TEXT здесь НЕ нужен,
-    # потому что текст уже обрабатывается
-    # custom_amount_handler выше.
-    #
-    # reject_receipt_message проверяет
-    # waiting_for_receipt внутри себя.
 
     await application.initialize()
 
